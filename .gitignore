@@ -1,0 +1,29 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Build outputs
+dist/
+.build/
+.out/
+.next/
+coverage/
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Cloudflare Wrangler
+.wrangler/
+.worker/
+wrangler.toml.local
+
+# Env
+.env
+.env.*
+
+# Logs
+*.log
