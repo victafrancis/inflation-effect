@@ -13,7 +13,7 @@ export const deckRent1bd = {
     name: "1-bedroom apartment rent",
     unit: "per month",
     category: "Housing",
-    source_item:
+    source_method:
       "The agent sourced annual prices from Numbeo’s Toronto “Apartment (1 bedroom) in City Centre” data (2015–2024), applied linear interpolation for gaps, and projected 2025 with a 5% increase.",
     image_url: "/items/rent_1bd.png"
   },

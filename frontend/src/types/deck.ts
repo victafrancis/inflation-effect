@@ -29,7 +29,7 @@ export type DeckCore = {
     name: string;
     unit: string;
     category: string;
-    source_item?: string;
+    source_method?: string;
     image_url?: string;
   };
   snapshots: { y10: Snapshot; y5: Snapshot; y0: Snapshot };

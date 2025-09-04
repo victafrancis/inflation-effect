@@ -2,15 +2,15 @@ import React, { useEffect, useRef, useState, useMemo } from "react";
 import { FullPageScroller } from "./components/FullPageScroller";
 import { Section } from "./components/Section";
 import { NavigationDots } from "./components/NavigationDots";
-import { ChevronDownIcon, RefreshCw } from "lucide-react";
+import { ChevronDownIcon, IterationCcw, RefreshCw } from "lucide-react";
 import { ValueRow } from "./components/ValueRow";
-import { deckCoffee } from "./mock/deck_coffee";
-import { deckRent1bd } from "./mock/deck_rent_1bd";
 import { buildDisplay, type Display } from "./utils/deckDisplay";
 import type { FullDeckV1 } from "./types/deck";
 import { ValueRowBalanced } from "./components/ValueRowBalanced";
-// import SnapshotTrend from "./components/SnapshotTrend";
-// import CagrContrastChart from "./components/CagrContrastChart";
+import { LoadingScreen } from "./components/LoadingScreen";
+import { ErrorScreen } from "./components/ErrorScreen";
+import SnapshotTrend from "./components/SnapshotTrend";
+import CagrContrastChart from "./components/CagrContrastChart";
 
 export function App() {
   const [activeSection, setActiveSection] = useState(0);
@@ -19,12 +19,140 @@ export function App() {
   const [showDots, setShowDots] = useState(true);
   const hideTimer = useRef<number | null>(null);
 
-  // Choose a dataset (switch manually when you want)
-  const deck: FullDeckV1 = deckCoffee;
-  // const deck: FullDeckV1 = deckRent1bd;
+  // NEW: deck state
+  const [deck, setDeck] = useState<FullDeckV1 | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  // Build the formatted overlay
-  const display: Display = buildDisplay(deck);
+  const API_BASE = String(import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
+  const DEFAULT_DECK_ID = Number.parseInt(String(import.meta.env.VITE_DEFAULT_DECK_ID ?? ""), 10);
+  const HAS_DEFAULT_DECK = Number.isFinite(DEFAULT_DECK_ID);
+  const UNITS_PER_100_THRESHOLD = Number(import.meta.env.VITE_UNITS_PER_100_THRESHOLD ?? 2);
+  const BASE = import.meta.env.BASE_URL ?? "/"; // from Vite's `base`
+
+  // Turn "items/x.png" or "/items/x.png" into "/inflation-effect/items/x.png"
+  const asset = (p: string) => `${BASE}${String(p).replace(/^\/+/, "")}`;
+  // Make item.image_url robust (handles http(s), data:, or relative)
+  const resolveImage = (src?: string) => {
+    if (!src) return asset("items/bitcoin.png");
+    if (/^(https?:|data:)/i.test(src)) return src; // already absolute
+    return asset(src);
+  };
+
+  async function fetchRandomDeck(signal?: AbortSignal) {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${API_BASE}/v1/deck/random`, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json: FullDeckV1 = await res.json();
+      setDeck(json);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function fetchDeckById(id: number, signal?: AbortSignal) {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${API_BASE}/v1/deck/${id}`, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json: FullDeckV1 = await res.json();
+      setDeck(json);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const nextItem = async () => {
+    if (loading) return; // guard against double-clicks
+    setShowDots(true);
+    setActiveSection(0);
+
+    // Scroll the scroller (not the window) back to the top
+    scrollerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+
+    // Clear current deck so the LoadingScreen can show while we fetch
+    setDeck(null);
+
+    // Optionally cancel an in-flight request
+    const ac = new AbortController();
+    await fetchRandomDeck(ac.signal);
+  };
+
+  // On mount: get a random deck
+  useEffect(() => {
+    const ac = new AbortController();
+    if (HAS_DEFAULT_DECK) {
+      fetchDeckById(DEFAULT_DECK_ID, ac.signal);
+    } else {
+      fetchRandomDeck(ac.signal);
+    }
+    return () => ac.abort();
+  }, []);
+
+  // Build the formatted overlay only when deck is ready
+  const display: Display | null = useMemo(
+    () => (deck ? buildDisplay(deck) : null),
+    [deck]
+  );
+
+  // EFFECT #1: track which section is closest while scrolling
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (!showDots) setShowDots(true);
+      const sections = Array.from(el.querySelectorAll(".section"));
+      let closest = 0, min = Infinity;
+      sections.forEach((s, idx) => {
+        const rect = s.getBoundingClientRect();
+        const dist = Math.abs(rect.top);
+        if (dist < min) { min = dist; closest = idx; }
+      });
+      setActiveSection(closest);
+      scheduleHide();
+    };
+    const showNow = () => { setShowDots(true); scheduleHide(); };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("wheel", showNow, { passive: true });
+    el.addEventListener("touchstart", showNow, { passive: true });
+    window.addEventListener("keydown", showNow);
+    scheduleHide();
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", showNow);
+      el.removeEventListener("touchstart", showNow);
+      window.removeEventListener("keydown", showNow);
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, [showDots]); // runs every render but always in the same order
+
+  // EFFECT #2: track total sections
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const countSections = () => {
+      const count = el.querySelectorAll("section.section").length;
+      setTotalSections(count);
+      setActiveSection(prev => Math.max(0, Math.min(prev, count - 1)));
+    };
+    countSections();
+    const mo = new MutationObserver(countSections);
+    mo.observe(el, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, []);
+
+  // Simple loading/error gate (rendered inside the same render pass,
+  // AFTER we’ve already called our hooks)
+  if (loading && !display) { return <LoadingScreen />; }
+  if (err && !display) { return <ErrorScreen err={err} onRetry={() => fetchRandomDeck()} />; }
+  if (!display) return null;
 
   // Convenience
   const ITEM_NAME = display.item.name.toLowerCase();
@@ -33,10 +161,11 @@ export function App() {
   const { metrics } = display;
 
   // $100 purchasing power availability
-  const hasUnitsPer100 =
-    deck.snapshots.y0.small_item_metrics?.unitsPer100 != null &&
-    deck.snapshots.y5.small_item_metrics?.unitsPer100 != null &&
-    deck.snapshots.y10.small_item_metrics?.unitsPer100 != null;
+  const hasUnitsPer100 = [
+    Number(display.snapshots.y10.unitsPer100 ?? 0),
+    Number(display.snapshots.y5.unitsPer100 ?? 0),
+    Number(display.snapshots.y0.unitsPer100 ?? 0),
+  ].some(v => v >= UNITS_PER_100_THRESHOLD);
 
   const scheduleHide = (delay = 500) => {
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
@@ -54,73 +183,19 @@ export function App() {
     scheduleHide();
   };
 
-  // Track which snap we’re on
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-
-    const onScroll = () => {
-      if (!showDots) setShowDots(true);
-      const sections = Array.from(el.querySelectorAll("section.section"));
-      let closest = 0;
-      let min = Infinity;
-      sections.forEach((s, idx) => {
-        const rect = s.getBoundingClientRect();
-        const dist = Math.abs(rect.top);
-        if (dist < min) { min = dist; closest = idx; }
-      });
-      setActiveSection(closest);
-      scheduleHide();
-    };
-
-    const showNow = () => { setShowDots(true); scheduleHide(); };
-
-    el.addEventListener("scroll", onScroll, { passive: true });
-    el.addEventListener("wheel", showNow, { passive: true });
-    el.addEventListener("touchstart", showNow, { passive: true });
-    window.addEventListener("keydown", showNow);
-    scheduleHide();
-
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      el.removeEventListener("wheel", showNow);
-      el.removeEventListener("touchstart", showNow);
-      window.removeEventListener("keydown", showNow);
-      if (hideTimer.current) window.clearTimeout(hideTimer.current);
-    };
-  }, []); // once
-
-  // Track total sections dynamically
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-
-    const countSections = () => {
-      const count = el.querySelectorAll("section.section").length;
-      setTotalSections(count);
-      setActiveSection(prev => Math.max(0, Math.min(prev, count - 1)));
-    };
-
-    countSections();
-    const mo = new MutationObserver(countSections);
-    mo.observe(el, { childList: true, subtree: true });
-
-    return () => mo.disconnect();
-  }, []);
-
   return (
     <div className="bg-black text-gray-200 min-h-screen">
       <FullPageScroller ref={scrollerRef}>
         {/* Hook / Hero (image-forward, no snapshots) */}
         <Section id="section-0" className="flex flex-col items-center justify-center text-center px-6">
-          <h1 className="font-bold text-header leading-tight mb-6">
+          <h1 className="font-bold text-subheader leading-tight mb-6">
             What does <span className="text-brandGold">inflation</span> really mean for you?
           </h1>
 
           {/* Image-first hero */}
           <div className="w-full max-w-3xl mb-6">
             <img
-              src={display.item.image_url}
+              src={resolveImage(display.item.image_url)}
               alt={`Image of ${ITEM_NAME}`}
               className="w-full h-[38vh] object-cover rounded-2xl shadow-xl mx-auto"
             />
@@ -129,6 +204,15 @@ export function App() {
           <p className="text-body opacity-85 max-w-[65ch]">
             Let’s look at <span className="font-semibold">{ITEM_NAME}</span>.
           </p>
+          <button
+            onClick={nextItem}
+            aria-label="Show another item"
+            className="mt-2 text-sm text-brandGold hover:text-gray-200
+                      inline-flex items-center gap-1 no-underline hover:underline"
+          >
+            <RefreshCw className="h-4 w-4" />
+            View a different item
+          </button>
 
           <div className="absolute bottom-8 sm:bottom-10 animate-bounce">
             <ChevronDownIcon size={28} className="text-brandGold" />
@@ -138,7 +222,7 @@ export function App() {
         {/* Reality Check (Fiat View) */}
         <Section id="section-1" className="flex flex-col items-center justify-center px-6">
           <h2 className="text-subheader font-bold mb-6 text-center">
-            Your {ITEM_NAME} keeps getting more <span className="text-brandGold">expensive</span>.
+            Your {ITEM_NAME} <span className="text-brandGold">{display.item.unit}</span> keeps getting more <span className="text-brandGold">expensive</span>.
           </h2>
           <div className="w-full max-w-3xl space-y-3">
             <ValueRow left={`${display.snapshots.y10.year}`} right={display.snapshots.y10.fiat} middle="10 yrs ago"/>
@@ -146,8 +230,8 @@ export function App() {
             <ValueRow left={`${display.snapshots.y0.year}`} right={display.snapshots.y0.fiat} middle="Today"/>
           </div>
           <details className="mt-4 text-xs opacity-70">
-            <summary className="cursor-pointer">Source</summary>
-            <div className="mt-2 opacity-60">{display.item.source}</div>
+            <summary className="cursor-pointer text-center">Source</summary>
+            <div className="mt-2 opacity-60">{display.item.source_method}</div>
           </details>
         </Section>
 
@@ -162,12 +246,12 @@ export function App() {
           <p className="text-body opacity-85 mb-6">
             {metrics.pctChange10Text} price increase in the last 10 years.
           </p>
-          {/* <div className="w-full max-w-3xl h-52 sm:h-64 md:h-72">
+          <div className="w-full max-w-3xl h-52 sm:h-64 md:h-72">
             <SnapshotTrend points={metrics.snapshotTrendPoints} currency="CAD" />
           </div>
           <p className="mt-3 text-xs opacity-60">
-            Trend of average price of {ITEM_NAME} across {display.snapshots.y10.year}, {display.snapshots.y5.year}, {display.snapshots.y0.year}.
-          </p> */}
+            Trend of average price of {ITEM_NAME} across the last 15 years.
+          </p>
         </Section>
 
         {/* $100 Bill – purchasing power (Conditional) */}
@@ -232,15 +316,15 @@ export function App() {
           <p className="text-body opacity-85 max-w-[70ch]">
             The Bank of Canada targets 2% annual inflation.
             <br /> 
-            But {ITEM_NAME} rose at ~{metrics.cagr10Text} per year over 10 years (and ~{metrics.cagr5Text} over 5 years).
+            But {ITEM_NAME} rose at ~{metrics.cagr5Text} per year over 5 years (and ~{metrics.cagr10Text} over 10 years).
           </p>
-          {/* <div className="w-full max-w-3xl h-52 sm:h-64 md:h-72 mt-4 mb-16 md:mb-24">
+          <div className="w-full max-w-3xl h-52 sm:h-64 md:h-72 mt-4 mb-16 md:mb-24">
             <CagrContrastChart
               cagr5={metrics.cagr5}     // decimal (e.g., 0.087), not "8.7%"
               cagr10={metrics.cagr10}   // decimal (e.g., 0.064), not "6.4%"
               target={0.02}
             />
-          </div> */}
+          </div>
         </Section>
 
         {/* Dollar burn */}
@@ -261,7 +345,7 @@ export function App() {
         {/* Projections — Fiat + BTC */}
         <Section id="section-6b" className="flex flex-col items-center justify-center px-6">
           <h2 className="text-subheader font-bold text-center mb-6">
-            If this trend continues, take a look at the <span className="text-brandGold">future cost</span> of {ITEM_NAME}..
+            If this trend continues, take a look at the potential <span className="text-brandGold">future cost</span> of {ITEM_NAME}..
           </h2>
           <div className="w-full max-w-3xl space-y-3">
             <ValueRow
@@ -281,13 +365,18 @@ export function App() {
             />
           </div>
           {/* calc explanation */}
-          <p className="mt-4 text-small opacity-60 text-center max-w-[70ch]">
-            Projections use the item’s compound annual growth from the past:
-            <br />
-            5-year: <code>price_today × (1 + {metrics.cagr5Text})^5</code>
-            <br />
-            10-year: <code>price_today × (1 + {metrics.cagr10Text})^10</code>
-          </p>
+          <details className="mt-4 text-xs opacity-70">
+            <summary className="cursor-pointer text-center">Projection Calculation</summary>
+            <div className="mt-2 opacity-60">
+              <p className="mt-4 text-caption text-center max-w-[70ch]">
+                Projections use the item’s compound annual growth from the past:
+                <br />
+                5-year: <code>price_today × (1 + {metrics.cagr5Text})^5</code>
+                <br />
+                10-year: <code>price_today × (1 + {metrics.cagr10Text})^10</code>
+              </p>
+            </div>
+          </details>
         </Section>
 
 
@@ -334,7 +423,7 @@ export function App() {
             Bitcoin
           </h1>
           <img
-            src="/items/bitcoin.png"
+            src={asset("/items/bitcoin.png")}
             alt={`Image of bitcoin`}
             className="w-full h-screen object-contain mx-auto bg-black"
           />
@@ -392,7 +481,7 @@ export function App() {
             <ValueRowBalanced left={display.projections.y5.fiat} middle={`${metrics.y0Plus5}*`} right={display.projections.y5.sats} />
             <ValueRowBalanced left={display.projections.y10.fiat} middle={`${metrics.y0Plus10}*`} right={display.projections.y10.sats} />
           </div>
-          <p className="text-xs opacity-85 mb-4 text-center">
+          <p className="text-xs opacity-60 mb-4 text-center">
             * Projections assume the same CAGR continues for item in CAD (see earlier for details) and 30% CAGR for Bitcoin, based on leading instututional research.
           </p>
         </Section>
@@ -407,9 +496,6 @@ export function App() {
             <p>• Global adoption and network effects</p>
             <p>• Money printing everywhere. Always. Forever.</p>
           </div>
-          <p className="mt-4 text-xs opacity-60 text-center">
-            MVP: will load from <code>bitcoin_fact</code>.
-          </p>
         </Section>
 
         {/* 14. Call to action */}
@@ -420,13 +506,21 @@ export function App() {
           <p className="text-body opacity-85 mb-12">
             Start saving in sound money, especially <span className="text-brandGold">Bitcoin</span>. Or at least start learning more about why it matters.
           </p>
-          <h2 className="text-subheader font-bold">
+          <h2 className="text-subheader font-bold mb-20">
             Your future self will thank you.
           </h2>
+          <button
+            className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#D4AF37] text-black font-semibold hover:opacity-90 transition"
+            onClick={nextItem}
+            aria-label="Show me another item"
+          >
+            <RefreshCw size={18} />
+            Show me another item
+          </button>
         </Section>
 
         {/* Outro / Support */}
-        <Section id="section-14" className="flex flex-col items-center justify-center px-6 text-center">
+        {/* <Section id="section-14" className="flex flex-col items-center justify-center px-6 text-center">
           <h2 className="text-[clamp(1.6rem,5.4vw,2.6rem)] font-bold mb-3">
             Enjoyed this?
           </h2>
@@ -435,9 +529,7 @@ export function App() {
           </p>
           <button
             className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#D4AF37] text-black font-semibold hover:opacity-90 transition"
-            onClick={() => {
-              document.getElementById("section-0")?.scrollIntoView({ behavior: "smooth" });
-            }}
+            onClick={nextItem}
             aria-label="Show me another item"
           >
             <RefreshCw size={18} />
@@ -446,15 +538,16 @@ export function App() {
           <div className="mt-8 text-xs opacity-60">
             <p>MVP: Add Buy Me a Coffee link and a Lightning address here.</p>
           </div>
-        </Section>
+        </Section> */}
+
       </FullPageScroller>
 
-      <NavigationDots
+      {/* <NavigationDots
         totalSections={totalSections}
         activeSection={activeSection}
         onDotClick={handleDotClick}
         visible={showDots}
-      />
+      /> */}
     </div>
   );
 }

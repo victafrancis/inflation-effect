@@ -13,7 +13,7 @@ export const deckCoffee = {
     name: "Coffee",
     unit: "per cup",
     category: "Drink",
-    source_item:
+    source_method:
       "The agent sourced annual prices from Numbeo’s Toronto “Cappuccino” data (2015–2024), used linear interpolation for intervening years, and estimated 2025 via a 3-5% increase.",
     image_url: "/items/coffee.png"
   },

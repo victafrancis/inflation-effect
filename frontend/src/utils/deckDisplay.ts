@@ -5,7 +5,7 @@ export type Display = {
     name: string;
     unit: string;
     category: string;
-    source?: string;
+    source_method?: string;
     image_url?: string;
   };
   snapshots: {
@@ -22,19 +22,19 @@ export type Display = {
     sats_10y: string; // e.g., "-99.62%"
   };
   metrics: {
-  years5: number;
-  years10: number;
-  pctChange5: number;       // e.g. 23.4
-  pctChange10: number;      // e.g. 51.2
-  cagr5: number;            // e.g. 0.031 (3.1%)
-  cagr10: number;           // e.g. 0.047 (4.7%)
-  pctChange5Text: string;   // e.g. "+23.4%"
-  pctChange10Text: string;  // e.g. "+51.2%"
-  cagr5Text: string;        // e.g. "3.1%"
-  cagr10Text: string;       // e.g. "4.7%"
-  y0Plus5: number;          // label convenience
-  y0Plus10: number;
-  // snapshotTrendPoints: { label: string; value: number }[];
+    years5: number;
+    years10: number;
+    pctChange5: number;       // e.g. 23.4
+    pctChange10: number;      // e.g. 51.2
+    cagr5: number;            // e.g. 0.031 (3.1%)
+    cagr10: number;           // e.g. 0.047 (4.7%)
+    pctChange5Text: string;   // e.g. "+23.4%"
+    pctChange10Text: string;  // e.g. "+51.2%"
+    cagr5Text: string;        // e.g. "3.1%"
+    cagr10Text: string;       // e.g. "4.7%"
+    y0Plus5: number;          // label convenience
+    y0Plus10: number;
+    snapshotTrendPoints: { label: string; value: number }[];
   };
 };
 
@@ -74,9 +74,9 @@ export function buildDisplay<T extends DeckCore>(d: T): Display {
   const cagr10 = Math.pow(y0Fiat / y10Fiat, 1 / years10) - 1;
 
   const snapshotTrendPoints = [
-    { label: String(new Date(d.snapshots.y10.date).getFullYear()), value: d.snapshots.y10.fiat.value },
-    { label: String(new Date(d.snapshots.y5.date).getFullYear()),  value: d.snapshots.y5.fiat.value },
-    { label: String(new Date(d.snapshots.y0.date).getFullYear()),  value: d.snapshots.y0.fiat.value },
+    { label: String(y10Year), value: y10Fiat },
+    { label: String(y5Year),  value: y5Fiat  },
+    { label: String(y0Year),  value: y0Fiat  },
   ];
 
   return {
@@ -84,7 +84,7 @@ export function buildDisplay<T extends DeckCore>(d: T): Display {
       name: d.item.name,
       unit: d.item.unit,
       category: d.item.category,
-      source: d.item.source_item,
+      source_method: d.item.source_method,
       image_url: d.item.image_url,
     },
     snapshots: {
@@ -110,7 +110,7 @@ export function buildDisplay<T extends DeckCore>(d: T): Display {
       cagr10Text: `${(cagr10 * 100).toFixed(1)}%`,
       y0Plus5:  y0Year + 5,
       y0Plus10: y0Year + 10,
-      // snapshotTrendPoints: snapshotTrendPoints
+      snapshotTrendPoints
     },
   };
 }
